@@ -62,7 +62,7 @@ WATCH_LIST = [
 
 # 所有 ETF 代碼統一在此處維護，不再寫入 WATCH_LIST
 ETF_CODES = {
-    "0050", "00981A", "00631L", "00685L", "00735", "00910", "00947","009816","00735","00709","00403A","00830","00935","00662","00657",
+    "0050", "00981A", "00631L", "00685L", "00735", "00910", "00947","009816","00709","00403A","00830","00935","00662","00657",
 }
 
 # --- 高亮特殊股設定清單 -----------------------
@@ -105,20 +105,7 @@ def price_color_tag(v):
         return "green"
     return "white"
 
-def pad_stock_label(text, target_width=28):
-    """根據中文字元實體視覺寬度計算補白，確保對齊"""
-    current_width = 0
-    for char in text:
-        # 判斷是否為中文字元或全形符號
-        if ord(char) > 127:
-            current_width += 2
-        else:
-            current_width += 1
-    
-    padding_needed = target_width - current_width
-    if padding_needed > 0:
-        return text + " " * padding_needed
-    return text
+# 修正：移除未被呼叫的 pad_stock_label 死碼函式
 
 
 # --- 狀態管理類別 ----------------------------
@@ -141,13 +128,18 @@ class StockState:
         self._csv_writing = False
         self._prev_tick_price: dict[str, float] = {}
         self._alert_time: dict[str, float] = {}
+        # 保護 state.data 讀寫的鎖，所有執行緒讀取前必須先取得此鎖的 snapshot
+        self._data_lock = threading.Lock()
 
         self._industry_cache: dict[str, str] = {}
-        self._init_excel_file()
-        self._load_industry_mapping()
 
-    def _init_excel_file(self):
-        """初始化本地 Excel 檔案，確保其存在"""
+        # 修正：初始化期間的 I/O 錯誤分開捕捉，避免前者靜默失敗導致後者讀到殘缺資料
+        init_ok = self._init_excel_file()
+        if init_ok:
+            self._load_industry_mapping()
+
+    def _init_excel_file(self) -> bool:
+        """初始化本地 Excel 檔案，確保其存在，回傳是否成功"""
         if not os.path.exists(EXCEL_FILE):
             try:
                 wb = openpyxl.Workbook()
@@ -158,6 +150,8 @@ class StockState:
                 wb.close()
             except Exception as e:
                 self.error = f"初始化 Excel 檔案失敗: {e}"
+                return False
+        return True
 
     def _load_industry_mapping(self):
         """從本地 Excel 讀取產業別對照表"""
@@ -232,6 +226,23 @@ class StockState:
 
 # --- 資料抓取 --------------------------------
 
+# 修正：將 parse_five 移至模組層級，避免在迴圈內重複建立 function 物件
+def parse_five(raw: str) -> list:
+    """解析以底線分隔的五檔報價字串，回傳長度為 5 的 float 清單"""
+    if not raw or raw == "-":
+        return [0, 0, 0, 0, 0]
+    parts = raw.split("_")
+    values = []
+    for p in parts:
+        if len(values) >= 5:
+            break
+        if p != "":
+            values.append(safe_float(p))
+    while len(values) < 5:
+        values.append(0)
+    return values
+
+
 def fetch(state: StockState) -> tuple[dict, list[str]]:
     result = {}
     twse_times = []
@@ -291,8 +302,9 @@ def fetch(state: StockState) -> tuple[dict, list[str]]:
             if price > 0:
                 state._price_cache[c] = price
 
-            if prev == 0:
-                prev = safe_float(i.get("o")) if safe_float(i.get("o")) > 0 else price
+            # 修正：prev 為 0 時僅以昨收快取補值，不以開盤價替代，避免漲跌計算錯誤
+            if prev == 0 and c in state._y_cache:
+                prev = state._y_cache[c]
 
             if price > 0 and prev > 0:
                 chg = round(price - prev, 2)
@@ -317,20 +329,6 @@ def fetch(state: StockState) -> tuple[dict, list[str]]:
                 amplitude = round((high_p - low_p) / prev_close * 100, 2)
             else:
                 amplitude = 0
-
-            def parse_five(raw: str) -> list:
-                if not raw or raw == "-":
-                    return [0, 0, 0, 0, 0]
-                parts = raw.split("_")
-                values = []
-                for p in parts:
-                    if len(values) >= 5:
-                        break
-                    if p != "":
-                        values.append(safe_float(p))
-                while len(values) < 5:
-                    values.append(0)
-                return values
 
             bid_prices = parse_five(i.get("b", ""))
             bid_vols   = parse_five(i.get("g", ""))
@@ -384,16 +382,22 @@ def refresh(state: StockState) -> None:
     state.local_time = now_tpe().strftime("%H:%M:%S")
 
     if data:
-        state.data = data
-        if twse_times:
-            state.twse_time = twse_times[0]
+        # 以鎖保護寫入，確保讀取端不會取到被部分覆寫的中間狀態
+        with state._data_lock:
+            state.data = data
+            if twse_times:
+                state.twse_time = twse_times[0]
 
 
 # --- Excel 寫入 ------------------------------
 
 def push_to_sheet(state: StockState):
     today = now_tpe().strftime("%Y-%m-%d")
-    
+
+    # 在鎖保護下取出 snapshot，取完立即釋放，避免長時間持鎖阻塞 GUI 讀取
+    with state._data_lock:
+        data_snapshot = dict(state.data)
+
     if not os.path.exists(EXCEL_FILE):
         state._init_excel_file()
 
@@ -408,7 +412,7 @@ def push_to_sheet(state: StockState):
 
     for c in all_codes:
         try:
-            d = state.data.get(c)
+            d = data_snapshot.get(c)
             if not d or not d.get("time"):
                 continue
 
@@ -454,7 +458,8 @@ def push_to_sheet(state: StockState):
                 d["pct"],
             ]
 
-            cache_key = f"hist_{sheet_name}"
+            # 修正：cache key 改用股票代碼而非 sheet_name，避免代碼與工作表名稱同名時衝突
+            cache_key = f"hist_code_{c}"
             if state._history_row_cache.get(cache_key) == row_data:
                 continue
 
@@ -500,6 +505,11 @@ def trigger_sheet_write(state: StockState):
 def push_to_csv(state: StockState):
     """將即時報價獨立儲存為單一 CSV 檔案"""
     today = now_tpe().strftime("%Y-%m-%d")
+
+    # 在鎖保護下取出 snapshot，取完立即釋放，避免長時間持鎖阻塞 GUI 讀取
+    with state._data_lock:
+        data_snapshot = dict(state.data)
+
     try:
         rows = []
         headers = [
@@ -537,18 +547,18 @@ def push_to_csv(state: StockState):
             ]
 
         for idx_info in INDEX_LIST:
-            d = state.data.get(idx_info["code"])
+            d = data_snapshot.get(idx_info["code"])
             if d and d["price"] > 0:
                 rows.append(build_rt_row(idx_info["name"], d))
 
         for c in WATCH_LIST:
-            d = state.data.get(c)
+            d = data_snapshot.get(c)
             if d and d["price"] > 0:
                 label = f"{d['name']}({c})" if d["name"] else c
                 rows.append(build_rt_row(label, d))
 
         for c in sorted(list(ETF_CODES)):
-            d = state.data.get(c)
+            d = data_snapshot.get(c)
             if d and d["price"] > 0:
                 label = f"{d['name']}({c})" if d["name"] else c
                 rows.append(build_rt_row(label, d))
@@ -750,13 +760,17 @@ class StockApp:
         self.text_area.config(state=tk.NORMAL)
         self.text_area.delete("1.0", tk.END)
         
+        # 在鎖保護下取出 snapshot，取完立即釋放，避免長時間持鎖阻塞背景寫入執行緒
+        with self.state._data_lock:
+            data_snapshot = dict(self.state.data)
+
         # 分流解析狀態結構
         indices = []
         etfs    = []
         stocks_by_industry = {}
 
         for idx_info in INDEX_LIST:
-            d = self.state.data.get(idx_info["code"])
+            d = data_snapshot.get(idx_info["code"])
             if d:
                 indices.append({
                     "label": idx_info["name"], "price": d["price"], "chg": d["chg"], "pct": d["pct"],
@@ -764,7 +778,7 @@ class StockApp:
                 })
 
         for c in WATCH_LIST:
-            d = self.state.data.get(c)
+            d = data_snapshot.get(c)
             if not d: continue
             label = f"{d['name']} ({c})" if d["name"] else c
             item_data = {
@@ -777,7 +791,7 @@ class StockApp:
             stocks_by_industry[industry].append(item_data)
 
         for c in ETF_CODES:
-            d = self.state.data.get(c)
+            d = data_snapshot.get(c)
             if not d: continue
             label = f"{d['name']} ({c})" if d["name"] else c
             item_data = {
