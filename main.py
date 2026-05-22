@@ -4,6 +4,7 @@ import requests
 import random
 import json
 import os
+import csv
 from datetime import datetime, timezone, timedelta
 
 # ─── 引入 GUI 相關元件 ────────────────────────
@@ -22,9 +23,10 @@ TPE = timezone(timedelta(hours=8))
 def now_tpe():
     return datetime.fromtimestamp(time.time(), TPE)
 
-# ─── Excel 檔案設定 ──────────────────────────
+# ─── 檔案設定 ──────────────────────────
 
 EXCEL_FILE = "個股股價.xlsx"
+CSV_FILE = "即時報價.csv"
 
 # ─── 股票與 ETF 清單 ─────────────────────────
 
@@ -116,6 +118,8 @@ class StockState:
         self._sheet_meta_cache: dict[str, dict] = {}
         self._sheet_lock = threading.Lock()
         self._sheet_writing = False
+        self._csv_lock = threading.Lock()
+        self._csv_writing = False
         self._prev_tick_price: dict[str, float] = {}
         self._alert_time: dict[str, float] = {}
 
@@ -195,25 +199,6 @@ class StockState:
         ws = wb.create_sheet(title=sheet_name)
         ws.append([stock_name])
         ws.append(["日期", "開盤價", "最高價", "最低價", "收盤價", "漲跌", "漲跌幅(%)"])
-        return ws
-
-    def get_realtime_worksheet(self, wb: openpyxl.Workbook) -> openpyxl.worksheet.worksheet.Worksheet:
-        """獲取或建立即時報價工作表。"""
-        sheet_name = "即時報價"
-        if sheet_name in wb.sheetnames:
-            return wb[sheet_name]
-        
-        ws = wb.create_sheet(title=sheet_name)
-        ws.append([
-            "名稱/代碼", "時間", "當前價", "昨收", "漲跌", "漲跌幅(%)",
-            "開盤", "最高", "最低", "總量(張)", "振幅(%)",
-            "委買價1", "委買量1", "委買價2", "委買量2",
-            "委買價3", "委買量3", "委買價4", "委買量4",
-            "委買價5", "委買量5",
-            "委賣價1", "委賣量1", "委賣價2", "委賣量2",
-            "委賣價3", "委賣量3", "委賣價4", "委賣量4",
-            "委賣價5", "委賣量5",
-        ])
         return ws
 
     def get_sheet_meta(self, ws: openpyxl.worksheet.worksheet.Worksheet, today: str) -> dict:
@@ -466,10 +451,48 @@ def push_to_sheet(state: StockState):
             state.error = f"歷史寫入失敗 ({c}): {e}"
 
     try:
-        rt_ws = state.get_realtime_worksheet(wb)
-        
-        if rt_ws.max_row > 1:
-            rt_ws.delete_rows(2, rt_ws.max_row)
+        wb.save(EXCEL_FILE)
+        wb.close()
+    except Exception as e:
+        state.error = f"儲存 Excel 檔案失敗 (請檢查是否被其他程式開啟): {e}"
+
+
+def trigger_sheet_write(state: StockState):
+    with state._sheet_lock:
+        if state._sheet_writing:
+            return
+        state._sheet_writing = True
+
+    def _run():
+        try:
+            push_to_sheet(state)
+        except Exception as e:
+            state.error = f"Excel 寫入執行緒失敗: {e}"
+        finally:
+            with state._sheet_lock:
+                state._sheet_writing = False
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+# ─── CSV 寫入功能（新功能加入） ──────────────────
+
+def push_to_csv(state: StockState):
+    """將即時報價獨立儲存為單一 CSV 檔案。"""
+    today = now_tpe().strftime("%Y-%m-%d")
+    try:
+        rows = []
+        headers = [
+            "名稱/代碼", "時間", "當前價", "昨收", "漲跌", "漲跌幅(%)",
+            "開盤", "最高", "最低", "總量(張)", "振幅(%)",
+            "委買價1", "委買量1", "委買價2", "委買量2",
+            "委買價3", "委買量3", "委買價4", "委買量4",
+            "委買價5", "委買量5",
+            "委賣價1", "委賣量1", "委賣價2", "委賣量2",
+            "委賣價3", "委賣量3", "委賣價4", "委賣量4",
+            "委賣價5", "委賣量5",
+        ]
 
         def build_rt_row(label: str, d: dict) -> list:
             bid_cols = []
@@ -497,44 +520,44 @@ def push_to_sheet(state: StockState):
         for idx_info in INDEX_LIST:
             d = state.data.get(idx_info["code"])
             if d and d["price"] > 0:
-                rt_ws.append(build_rt_row(idx_info["name"], d))
+                rows.append(build_rt_row(idx_info["name"], d))
 
         for c in WATCH_LIST:
             d = state.data.get(c)
             if d and d["price"] > 0:
                 label = f"{d['name']}({c})" if d["name"] else c
-                rt_ws.append(build_rt_row(label, d))
+                rows.append(build_rt_row(label, d))
 
         for c in sorted(list(ETF_CODES)):
             d = state.data.get(c)
             if d and d["price"] > 0:
                 label = f"{d['name']}({c})" if d["name"] else c
-                rt_ws.append(build_rt_row(label, d))
+                rows.append(build_rt_row(label, d))
+
+        # 覆蓋寫入 CSV 檔案
+        with open(CSV_FILE, mode="w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(rows)
 
     except Exception as e:
-        state.error = f"即時分頁覆蓋失敗: {e}"
-
-    try:
-        wb.save(EXCEL_FILE)
-        wb.close()
-    except Exception as e:
-        state.error = f"儲存 Excel 檔案失敗 (請檢查是否被其他程式開啟): {e}"
+        state.error = f"CSV 寫入失敗: {e}"
 
 
-def trigger_sheet_write(state: StockState):
-    with state._sheet_lock:
-        if state._sheet_writing:
+def trigger_csv_write(state: StockState):
+    with state._csv_lock:
+        if state._csv_writing:
             return
-        state._sheet_writing = True
+        state._csv_writing = True
 
     def _run():
         try:
-            push_to_sheet(state)
+            push_to_csv(state)
         except Exception as e:
-            state.error = f"Excel 寫入執行緒失敗: {e}"
+            state.error = f"CSV 執行緒失敗: {e}"
         finally:
-            with state._sheet_lock:
-                state._sheet_writing = False
+            with state._csv_lock:
+                state._csv_writing = False
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -602,18 +625,33 @@ class StockApp:
         self.text_area.tag_config("bg_green", foreground="#ffffff", background="#2ed573")
 
         # 啟動背景網路抓取與排程
-        self.network_counter = 0
         self.start_background_loop()
         self.update_gui_loop()
 
     def start_background_loop(self):
-        """獨立執行緒：專職處理網路請求與定時調用 Excel 寫入。"""
+        """獨立執行緒：專職處理網路請求、每分鐘寫入 CSV 與每 10 分鐘寫入 Excel 歷史資料。"""
         def _loop():
+            last_csv_time = 0.0
+            last_excel_time = 0.0
+            
+            # 設定更新週期（秒）
+            csv_interval = 60      # 每 1 分鐘更新即時報價 CSV
+            excel_interval = 600   # 剩下的歷史分頁隔久一點，每 10 分鐘更新一次
+
             while True:
                 refresh(self.state)
-                self.network_counter += 1
-                if self.network_counter % 6 == 0:
+                current_now = time.time()
+                
+                # 判斷是否觸發每分鐘 CSV 寫入
+                if current_now - last_csv_time >= csv_interval:
+                    trigger_csv_write(self.state)
+                    last_csv_time = current_now
+                    
+                # 判斷是否觸發每 10 分鐘 Excel 歷史寫入
+                if current_now - last_excel_time >= excel_interval:
                     trigger_sheet_write(self.state)
+                    last_excel_time = current_now
+                    
                 time.sleep(10)
         
         t = threading.Thread(target=_loop, daemon=True)
@@ -673,7 +711,12 @@ class StockApp:
     def render_data(self):
         """將最新的 state 資料渲染進視窗。"""
         # 1. 更新上方狀態列
-        writing_hint = " [寫入中...]" if self.state._sheet_writing else ""
+        writing_hint = ""
+        if self.state._sheet_writing:
+            writing_hint = " [Excel歷史寫入中...]"
+        elif self.state._csv_writing:
+            writing_hint = " [CSV即時寫入中...]"
+            
         err_msg = f"\n錯誤訊息: {self.state.error}" if self.state.error else ""
         status_text = (
             f" 本機時間：{self.state.local_time}   |   "
