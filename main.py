@@ -491,7 +491,7 @@ def trigger_sheet_write(state: StockState):
     t.start()
 
 
-# --- CSV 寫入功能（新功能加入） ----------------──
+# --- CSV 寫入功能 ----------------──
 
 def push_to_csv(state: StockState):
     """將即時報價獨立儲存為單一 CSV 檔案"""
@@ -586,10 +586,11 @@ class StockApp:
         self.state = state
         
         self.root.title("台股即時報價監控系統")
-        self.root.geometry("850x800")
+        # 修正：將視窗預設寬度由 850 微調至 900，配合定位點右移
+        self.root.geometry("900x800")
         self.root.configure(bg="#1e1e1e")
         
-        # 使用等寬字型確保表格對齊
+        # 使用等寬字型確保表格基本字形一致
         self.display_font = tkfont.Font(family="Courier New", size=11, weight="bold")
         self.header_font = tkfont.Font(family="Microsoft JhengHei", size=11, weight="bold")
         
@@ -615,6 +616,7 @@ class StockApp:
         self.scrollbar = tk.Scrollbar(self.main_frame)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # 修正：將整體定位點往右平移（由 280, 420, 580 右移至 360, 500, 660），為長商品名稱留出充足空間
         self.text_area = tk.Text(
             self.main_frame, 
             font=self.display_font, 
@@ -623,7 +625,8 @@ class StockApp:
             yscrollcommand=self.scrollbar.set,
             wrap=tk.NONE,
             bd=0,
-            highlightthickness=0
+            highlightthickness=0,
+            tabs=(360, "right", 500, "right", 660, "right")
         )
         self.text_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.scrollbar.config(command=self.text_area.yview)
@@ -678,17 +681,18 @@ class StockApp:
         self.root.after(500, self.update_gui_loop)
 
     def append_row_text(self, item: dict):
-        """計算排版寬度並附加至 Text 區塊"""
-        lbl_str = pad_stock_label(item['label'], target_width=28)
+        """利用定位點將欄位直接以定位符號隔開，不受字元補白誤差影響"""
+        lbl_str = item['label']
         
         if item["price"] == 0:
-            self.text_area.insert(tk.END, lbl_str, "white")
-            self.text_area.insert(tk.END, f"{'—':>12}{'—':>12}{'—':>14}\n", "white")
+            self.text_area.insert(tk.END, f"{lbl_str}\t—\t—\t—\n", "white")
             return
 
-        p_str = f"{item['price']:>12.2f}"
-        c_str = f"{item['chg']:>+12.2f}"
-        pct_str = f"{item['pct']:>+13.2f}%"
+        p_str = f"{item['price']:.2f}"
+        c_str = f"{item['chg']:+.2f}"
+        pct_str = f"{item['pct']:+.2f}%"
+        
+        row_str = f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n"
         
         col = price_color_tag(item["chg"])
         pct = item["pct"]
@@ -696,32 +700,24 @@ class StockApp:
 
         # 處理高亮特定特殊股
         if item.get("code") in ("2330", "0050"):
-            self.text_area.insert(tk.END, lbl_str, "special")
-            self.text_area.insert(tk.END, p_str + c_str + pct_str, "special")
-            self.text_area.insert(tk.END, "\n")
+            self.text_area.insert(tk.END, row_str, "special")
             return
 
         if alert:
-            self.text_area.insert(tk.END, lbl_str, "alert")
-            self.text_area.insert(tk.END, p_str + c_str + pct_str, "alert")
-            self.text_area.insert(tk.END, "\n")
+            self.text_area.insert(tk.END, row_str, "alert")
             return
 
         if pct >= 5:
-            self.text_area.insert(tk.END, lbl_str, "bg_red")
-            self.text_area.insert(tk.END, p_str + c_str + pct_str, "bg_red")
-            self.text_area.insert(tk.END, "\n")
+            self.text_area.insert(tk.END, row_str, "bg_red")
             return
 
         if pct <= -5:
-            self.text_area.insert(tk.END, lbl_str, "bg_green")
-            self.text_area.insert(tk.END, p_str + c_str + pct_str, "bg_green")
-            self.text_area.insert(tk.END, "\n")
+            self.text_area.insert(tk.END, row_str, "bg_green")
             return
 
-        self.text_area.insert(tk.END, lbl_str, "white")
-        self.text_area.insert(tk.END, p_str + c_str + pct_str, col)
-        self.text_area.insert(tk.END, "\n")
+        # 分段填入以確保漲跌幅與漲跌呈現正確的顏色，前置名稱與股價維持白色
+        self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}", "white")
+        self.text_area.insert(tk.END, f"\t{c_str}\t{pct_str}\n", col)
 
     def render_data(self):
         """將最新的 state 資料渲染進視窗"""
@@ -782,8 +778,8 @@ class StockApp:
             }
             etfs.append(item_data)
 
-        # 標題行補白修正，移除開頭多餘空格，確保與資料行完全對齊
-        header_line = f"{pad_stock_label('股名/股號', target_width=28)}{'股價':>12}{'漲跌':>12}{'漲跌幅(%)':>13}\n"
+        # 標題行同步使用定位符號，確保絕對對齊
+        header_line = "股名/股號\t股價\t漲跌\t漲跌幅(%)\n"
         separator   = "───────────────────────────────────────────────────────────────────\n"
 
         # 輸出 ── 指數區 ──
