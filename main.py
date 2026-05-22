@@ -65,6 +65,10 @@ ETF_CODES = {
     "0050", "00981A", "00631L", "00685L", "00735", "00910", "00947","009816","00735","00709","00403A","00830","00935","00662","00657",
 }
 
+# --- 高亮特殊股設定清單 -----------------------
+# 在此清單內的股票名稱與代碼將會固定顯示為藍色，其股價與漲跌幅維持原本顏色變動
+HIGHLIGHT_STOCKS = ["2330", "0050", "009816", "00981A"]
+
 # --- 指數清單 --------------------------------
 
 INDEX_LIST = [
@@ -638,6 +642,7 @@ class StockApp:
         self.text_area.tag_config("title", foreground="#ffd32a")
         self.text_area.tag_config("dim", foreground="#747d8c")
         self.text_area.tag_config("special", foreground="#ffffff", background="#3742fa")
+        self.text_area.tag_config("blue", foreground="#3498db")
         self.text_area.tag_config("alert", foreground="#000000", background="#ffa502")
         self.text_area.tag_config("bg_red", foreground="#ffffff", background="#ff4d4d")
         self.text_area.tag_config("bg_green", foreground="#ffffff", background="#2ed573")
@@ -683,41 +688,44 @@ class StockApp:
     def append_row_text(self, item: dict):
         """利用定位點將欄位直接以定位符號隔開，不受字元補白誤差影響"""
         lbl_str = item['label']
+        code = item.get("code")
         
         if item["price"] == 0:
-            self.text_area.insert(tk.END, f"{lbl_str}\t—\t—\t—\n", "white")
+            name_tag = "blue" if code in HIGHLIGHT_STOCKS else "white"
+            self.text_area.insert(tk.END, f"{lbl_str}", name_tag)
+            self.text_area.insert(tk.END, "\t—\t—\t—\n", "white")
             return
 
         p_str = f"{item['price']:.2f}"
         c_str = f"{item['chg']:+.2f}"
         pct_str = f"{item['pct']:+.2f}%"
         
-        row_str = f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n"
-        
         col = price_color_tag(item["chg"])
         pct = item["pct"]
         alert = item.get("alert", False)
 
-        # 處理高亮特定特殊股
-        if item.get("code") in ("2330", "0050"):
-            self.text_area.insert(tk.END, row_str, "special")
-            return
-
+        # 判斷整行背景色覆蓋規則（保留大於等於 5% 暴漲跌與警示高亮）
         if alert:
-            self.text_area.insert(tk.END, row_str, "alert")
+            self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "alert")
             return
 
         if pct >= 5:
-            self.text_area.insert(tk.END, row_str, "bg_red")
+            self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "bg_red")
             return
 
         if pct <= -5:
-            self.text_area.insert(tk.END, row_str, "bg_green")
+            self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "bg_green")
             return
 
-        # 分段填入以確保漲跌幅與漲跌呈現正確的顏色，前置名稱與股價維持白色
-        self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}", "white")
-        self.text_area.insert(tk.END, f"\t{c_str}\t{pct_str}\n", col)
+        # 處理高亮特定特殊股：名稱固定藍色，股價、漲跌、漲跌幅全部隨漲跌變動顏色
+        if code in HIGHLIGHT_STOCKS:
+            self.text_area.insert(tk.END, f"{lbl_str}", "blue")
+            self.text_area.insert(tk.END, f"\t{p_str}\t{c_str}\t{pct_str}\n", col)
+            return
+
+        # 一般正常個股分段填入：前置名稱維持白色，股價、漲跌、漲跌幅隨漲跌變動顏色
+        self.text_area.insert(tk.END, f"{lbl_str}", "white")
+        self.text_area.insert(tk.END, f"\t{p_str}\t{c_str}\t{pct_str}\n", col)
 
     def render_data(self):
         """將最新的 state 資料渲染進視窗"""
