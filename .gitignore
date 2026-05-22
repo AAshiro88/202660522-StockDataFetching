@@ -1,5 +1,6 @@
 # 排除所有 xlsx 檔案
 *.xlsx
+*.csv
 
 # 排除 Excel 產生的臨時暫存檔
 ~$*.xlsx
