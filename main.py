@@ -7,28 +7,28 @@ import os
 import csv
 from datetime import datetime, timezone, timedelta
 
-# ─── 引入 GUI 相關元件 ────────────────────────
+# --- 引入 GUI 相關元件 ------------------------
 import tkinter as tk
 from tkinter import font as tkfont
 
-# ─── 本地 Excel 處理 ──────────────────────────
+# --- 本地 Excel 處理 --------------------------
 
 import openpyxl
 from openpyxl.utils import get_column_letter
 
-# ─── 時間設定 ────────────────────────────────
+# --- 時間設定 --------------------------------
 
 TPE = timezone(timedelta(hours=8))
 
 def now_tpe():
     return datetime.fromtimestamp(time.time(), TPE)
 
-# ─── 檔案設定 ──────────────────────────
+# --- 檔案設定 --------------------------------
 
 EXCEL_FILE = "個股股價.xlsx"
 CSV_FILE = "即時報價.csv"
 
-# ─── 股票與 ETF 清單 ─────────────────────────
+# --- 股票與 ETF 清單 -------------------------
 
 # 僅保留個股，移除重複的 ETF 代碼
 WATCH_LIST = [
@@ -65,20 +65,20 @@ ETF_CODES = {
     "0050", "00981A", "00631L", "00685L", "00735", "00910", "00947","009816","00735","00709","00403A","00830","00935","00662","00657",
 }
 
-# ─── 指數清單 ────────────────────────────────
+# --- 指數清單 --------------------------------
 
 INDEX_LIST = [
     {"code": "t00", "name": "加權指數", "sheet": "加權指數"},
     {"code": "t01", "name": "櫃買指數", "sheet": "櫃買指數"},
 ]
 
-# ─── API ──────────────────────────────────────
+# --- API ──────────────────────────────────────
 
 URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 
-# ─── 輔助函式 ────────────────────────────────
+# --- 輔助函式 --------------------------------
 
 def safe_float(v):
     try:
@@ -101,8 +101,23 @@ def price_color_tag(v):
         return "green"
     return "white"
 
+def pad_stock_label(text, target_width=28):
+    """根據中文字元實體視覺寬度計算補白，確保對齊"""
+    current_width = 0
+    for char in text:
+        # 判斷是否為中文字元或全形符號
+        if ord(char) > 127:
+            current_width += 2
+        else:
+            current_width += 1
+    
+    padding_needed = target_width - current_width
+    if padding_needed > 0:
+        return text + " " * padding_needed
+    return text
 
-# ─── 狀態管理類別 ────────────────────────────
+
+# --- 狀態管理類別 ----------------------------
 
 class StockState:
 
@@ -128,7 +143,7 @@ class StockState:
         self._load_industry_mapping()
 
     def _init_excel_file(self):
-        """初始化本地 Excel 檔案，確保其存在。"""
+        """初始化本地 Excel 檔案，確保其存在"""
         if not os.path.exists(EXCEL_FILE):
             try:
                 wb = openpyxl.Workbook()
@@ -141,7 +156,7 @@ class StockState:
                 self.error = f"初始化 Excel 檔案失敗: {e}"
 
     def _load_industry_mapping(self):
-        """從本地 Excel 讀取產業別對照表。"""
+        """從本地 Excel 讀取產業別對照表"""
         try:
             if not os.path.exists(EXCEL_FILE):
                 return
@@ -192,7 +207,7 @@ class StockState:
         return self._industry_cache.get(code, "其他業")
 
     def get_worksheet(self, wb: openpyxl.Workbook, sheet_name: str, stock_name: str = "") -> openpyxl.worksheet.worksheet.Worksheet:
-        """獲取或建立指定工作表。"""
+        """獲取或建立指定工作表"""
         if sheet_name in wb.sheetnames:
             return wb[sheet_name]
         
@@ -202,7 +217,7 @@ class StockState:
         return ws
 
     def get_sheet_meta(self, ws: openpyxl.worksheet.worksheet.Worksheet, today: str) -> dict:
-        """讀取工作表最後一行日期資料。"""
+        """讀取工作表最後一行日期資料"""
         max_row = ws.max_row
         if max_row <= 2:
             return {"date": None, "row": 3}
@@ -211,7 +226,7 @@ class StockState:
         return {"date": str(last_date_val) if last_date_val else None, "row": max_row}
 
 
-# ─── 資料抓取 ────────────────────────────────
+# --- 資料抓取 --------------------------------
 
 def fetch(state: StockState) -> tuple[dict, list[str]]:
     result = {}
@@ -370,7 +385,7 @@ def refresh(state: StockState) -> None:
             state.twse_time = twse_times[0]
 
 
-# ─── Excel 寫入 ──────────────────────────────
+# --- Excel 寫入 ------------------------------
 
 def push_to_sheet(state: StockState):
     today = now_tpe().strftime("%Y-%m-%d")
@@ -476,10 +491,10 @@ def trigger_sheet_write(state: StockState):
     t.start()
 
 
-# ─── CSV 寫入功能（新功能加入） ──────────────────
+# --- CSV 寫入功能（新功能加入） ----------------──
 
 def push_to_csv(state: StockState):
-    """將即時報價獨立儲存為單一 CSV 檔案。"""
+    """將即時報價獨立儲存為單一 CSV 檔案"""
     today = now_tpe().strftime("%Y-%m-%d")
     try:
         rows = []
@@ -563,7 +578,7 @@ def trigger_csv_write(state: StockState):
     t.start()
 
 
-# ─── Tkinter UI 視窗實作 ───────────────────────
+# --- Tkinter UI 視窗實作 -----------------------
 
 class StockApp:
     def __init__(self, root, state):
@@ -629,7 +644,7 @@ class StockApp:
         self.update_gui_loop()
 
     def start_background_loop(self):
-        """獨立執行緒：專職處理網路請求、每分鐘寫入 CSV 與每 10 分鐘寫入 Excel 歷史資料。"""
+        """獨立執行緒：專職處理網路請求、每分鐘寫入 CSV 與每 10 分鐘寫入 Excel 歷史資料"""
         def _loop():
             last_csv_time = 0.0
             last_excel_time = 0.0
@@ -658,13 +673,13 @@ class StockApp:
         t.start()
 
     def update_gui_loop(self):
-        """主執行緒：定期刷新視窗文字內容（不造成畫面卡頓）。"""
+        """主執行緒：定期刷新視窗文字內容（不造成畫面卡頓）"""
         self.render_data()
         self.root.after(500, self.update_gui_loop)
 
     def append_row_text(self, item: dict):
-        """計算排版寬度並附加至 Text 區塊。"""
-        lbl_str = f" {item['label']:<28}"
+        """計算排版寬度並附加至 Text 區塊"""
+        lbl_str = pad_stock_label(item['label'], target_width=28)
         
         if item["price"] == 0:
             self.text_area.insert(tk.END, lbl_str, "white")
@@ -709,7 +724,7 @@ class StockApp:
         self.text_area.insert(tk.END, "\n")
 
     def render_data(self):
-        """將最新的 state 資料渲染進視窗。"""
+        """將最新的 state 資料渲染進視窗"""
         # 1. 更新上方狀態列
         writing_hint = ""
         if self.state._sheet_writing:
@@ -767,8 +782,9 @@ class StockApp:
             }
             etfs.append(item_data)
 
-        header_line = f" {'股名/股號':<25}{'股價':>12}{'漲跌':>12}{'漲跌幅(%)':>12}\n"
-        separator   = " ──────────────────────────────────────────────────────────────────\n"
+        # 標題行補白修正，移除開頭多餘空格，確保與資料行完全對齊
+        header_line = f"{pad_stock_label('股名/股號', target_width=28)}{'股價':>12}{'漲跌':>12}{'漲跌幅(%)':>13}\n"
+        separator   = "───────────────────────────────────────────────────────────────────\n"
 
         # 輸出 ── 指數區 ──
         if indices:
@@ -792,7 +808,9 @@ class StockApp:
             self.text_area.insert(tk.END, header_line, "dim")
             self.text_area.insert(tk.END, separator, "dim")
             
-            INDUSTRY_ORDER = [
+            # 依造指定產業順序排序
+            # 原始清單中"電機機械"缺少"業"字，此處不更動以符合原功能
+            print_order = [
                 "半導體業", "電腦及週邊設備業", "電子零組件業", "其他電子業",
                 "通信網路業", "光電業", "電子通路業", "資訊服務業",
                 "其他業", "金融保險業", "航運業", "電機機械", "汽車工業",
@@ -803,7 +821,7 @@ class StockApp:
             ]
             
             existing_industries = list(stocks_by_industry.keys())
-            sorted_industries = [ind for ind in INDUSTRY_ORDER if ind in existing_industries]
+            sorted_industries = [ind for ind in print_order if ind in existing_industries]
             for ind in sorted(existing_industries):
                 if ind not in sorted_industries:
                     sorted_industries.append(ind)
@@ -824,7 +842,7 @@ class StockApp:
         self.root.update_idletasks()
 
 
-# ─── 主程式進入點 ────────────────────────────
+# --- 主程式進入點 ----------------------------
 
 def main():
     # 呼叫 Windows 系統 API，強制通知 OS 此程式自主處理高 DPI 縮放（消除字體毛邊）
