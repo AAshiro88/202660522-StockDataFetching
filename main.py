@@ -71,9 +71,10 @@ HIGHLIGHT_STOCKS = ["2330", "0050", "009816", "00981A", "3037", "8046", "2454"]
 
 # --- 指數清單 --------------------------------
 
+# 修正：櫃買指數代碼由 t01 修正為 o00，以對應正確的櫃買指數
 INDEX_LIST = [
     {"code": "t00", "name": "加權指數", "sheet": "加權指數"},
-    {"code": "t01", "name": "櫃買指數", "sheet": "櫃買指數"},
+    {"code": "o00", "name": "櫃買指數", "sheet": "櫃買指數"},
 ]
 
 # --- API ──────────────────────────────────────
@@ -128,6 +129,8 @@ class StockState:
         self._csv_writing = False
         self._prev_tick_price: dict[str, float] = {}
         self._alert_time: dict[str, float] = {}
+        # 儲存警示觸發時的漲跌方向，用於區分顏色
+        self._alert_dir: dict[str, str] = {}
         # 保護 state.data 讀寫的鎖，所有執行緒讀取前必須先取得此鎖的 snapshot
         self._data_lock = threading.Lock()
 
@@ -193,7 +196,7 @@ class StockState:
                 industry = str(row[industry_idx]).strip() if row[industry_idx] else ""
 
                 if raw_code_name and industry:
-                    parts = raw_code_name.replace('　', ' ').split()
+                    parts = raw_code_name.replace(' ', ' ').split()
                     if parts:
                         code = parts[0].strip()
                         if code.isdigit():
@@ -226,7 +229,7 @@ class StockState:
 
 # --- 資料抓取 --------------------------------
 
-# 修正：將 parse_five 移至模組層級，避免在迴圈內重複建立 function 物件
+# 修正：將 parse_five 移至模組層級，避免在迴圈內重複建立 function物件
 def parse_five(raw: str) -> list:
     """解析以底線分隔的五檔報價字串，回傳長度為 5 的 float 清單"""
     if not raw or raw == "-":
@@ -249,9 +252,15 @@ def fetch(state: StockState) -> tuple[dict, list[str]]:
 
     combined_watch_list = list(set(WATCH_LIST).union(ETF_CODES))
 
+    # 修正：動態判斷指數代碼，o00 開頭使用 otc_ 市場別，其餘使用 tse_ 市場別
+    index_ex_list = []
+    for i in INDEX_LIST:
+        prefix = "otc" if i["code"].startswith("o") else "tse"
+        index_ex_list.append(f"{prefix}_{i['code']}.tw")
+
     ex = "|".join(
         [f"tse_{c}.tw|otc_{c}.tw" for c in combined_watch_list]
-        + [f"tse_{i['code']}.tw" for i in INDEX_LIST]
+        + index_ex_list
     )
 
     try:
@@ -337,19 +346,25 @@ def fetch(state: StockState) -> tuple[dict, list[str]]:
 
             prev_tick = state._prev_tick_price.get(c, 0)
             if prev_tick > 0 and price > 0:
-                tick_chg_pct = abs((price - prev_tick) / prev_tick * 100)
+                tick_chg_pct = (price - prev_tick) / prev_tick * 100
+                abs_tick_chg_pct = abs(tick_chg_pct)
             else:
                 tick_chg_pct = 0
+                abs_tick_chg_pct = 0
 
             if price > 0:
                 state._prev_tick_price[c] = price
 
             now_ts = time.time()
-            if tick_chg_pct >= 1:
+            if abs_tick_chg_pct >= 1:
                 state._alert_time[c] = now_ts
+                # 紀錄變動方向：up 表示上漲，down 表示下跌
+                state._alert_dir[c] = "up" if tick_chg_pct > 0 else "down"
             elif c in state._alert_time:
                 if now_ts - state._alert_time[c] >= 300:
                     del state._alert_time[c]
+                    if c in state._alert_dir:
+                        del state._alert_dir[c]
 
             result[c] = {
                 "name":       i.get("n", ""),
@@ -363,6 +378,7 @@ def fetch(state: StockState) -> tuple[dict, list[str]]:
                 "volume":     volume,
                 "amplitude":  amplitude,
                 "alert":      c in state._alert_time,
+                "alert_dir":  state._alert_dir.get(c, ""),
                 "bid_prices": bid_prices,
                 "bid_vols":   bid_vols,
                 "ask_prices": ask_prices,
@@ -653,7 +669,11 @@ class StockApp:
         self.text_area.tag_config("dim", foreground="#747d8c")
         self.text_area.tag_config("special", foreground="#ffffff", background="#3742fa")
         self.text_area.tag_config("blue", foreground="#3498db")
-        self.text_area.tag_config("alert", foreground="#000000", background="#ffa502")
+        self.text_area.tag_config("alert_up", foreground="#000000", background="#ffa502")
+        
+        # 將突發下跌警示的背景色改為深紫色（#8e44ad），文字維持白色
+        self.text_area.tag_config("alert_down", foreground="#ffffff", background="#8e44ad")        
+        
         self.text_area.tag_config("bg_red", foreground="#ffffff", background="#ff4d4d")
         self.text_area.tag_config("bg_green", foreground="#ffffff", background="#2ed573")
 
@@ -713,10 +733,14 @@ class StockApp:
         col = price_color_tag(item["chg"])
         pct = item["pct"]
         alert = item.get("alert", False)
+        alert_dir = item.get("alert_dir", "")
 
-        # 判斷整行背景色覆蓋規則（保留大於等於 5% 暴漲跌與警示高亮）
+        # 判斷整行背景色覆蓋規則（處理突發變動 1% 的分流，與原本大於等於 5% 的暴漲跌高亮）
         if alert:
-            self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "alert")
+            if alert_dir == "up":
+                self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "alert_up")
+            else:
+                self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "alert_down")
             return
 
         if pct >= 5:
@@ -774,7 +798,7 @@ class StockApp:
             if d:
                 indices.append({
                     "label": idx_info["name"], "price": d["price"], "chg": d["chg"], "pct": d["pct"],
-                    "code": idx_info["code"], "alert": d.get("alert", False)
+                    "code": idx_info["code"], "alert": d.get("alert", False), "alert_dir": d.get("alert_dir", "")
                 })
 
         for c in WATCH_LIST:
@@ -783,7 +807,7 @@ class StockApp:
             label = f"{d['name']} ({c})" if d["name"] else c
             item_data = {
                 "label": label, "price": d["price"], "chg": d["chg"], "pct": d["pct"],
-                "code": c, "alert": d.get("alert", False)
+                "code": c, "alert": d.get("alert", False), "alert_dir": d.get("alert_dir", "")
             }
             industry = self.state.get_industry(c)
             if industry not in stocks_by_industry:
@@ -796,7 +820,7 @@ class StockApp:
             label = f"{d['name']} ({c})" if d["name"] else c
             item_data = {
                 "label": label, "price": d["price"], "chg": d["chg"], "pct": d["pct"],
-                "code": c, "alert": d.get("alert", False)
+                "code": c, "alert": d.get("alert", False), "alert_dir": d.get("alert_dir", "")
             }
             etfs.append(item_data)
 
