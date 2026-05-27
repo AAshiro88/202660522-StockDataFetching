@@ -367,7 +367,7 @@ def fetch(state: StockState) -> tuple[dict, list[str]]:
 
             bid_prices = parse_five(i.get("b", ""))
             bid_vols   = parse_five(i.get("g", ""))
-            ask_prices = parse_five(i.get("a", ""))
+            ask_prices = parse_five(i.get("f", ""))
             ask_vols   = parse_five(i.get("f", ""))
 
             prev_tick = state._prev_tick_price.get(c, 0)
@@ -642,8 +642,8 @@ class StockApp:
         self.state = state
         
         self.root.title("台股即時報價監控系統")
-        # 修正：將視窗預設寬度由 850 微調至 900，配合定位點右移
-        self.root.geometry("900x800")
+        # 修正：將視窗預設寬度調整至 1100，配合最高、最低欄位的定位點
+        self.root.geometry("1100x800")
         self.root.configure(bg="#1e1e1e")
         
         # 使用等寬字型確保表格基本字形一致
@@ -672,7 +672,7 @@ class StockApp:
         self.scrollbar = tk.Scrollbar(self.main_frame)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # 修正：將整體定位點往右平移（由 280, 420, 580 右移至 360, 500, 660），為長商品名稱留出充足空間
+        # 修正：擴充定位點以容納最高、最低價欄位，並將 -yaxiscommand 修正為正確的 yscrollcommand 參數
         self.text_area = tk.Text(
             self.main_frame, 
             font=self.display_font, 
@@ -682,7 +682,7 @@ class StockApp:
             wrap=tk.NONE,
             bd=0,
             highlightthickness=0,
-            tabs=(360, "right", 500, "right", 660, "right")
+            tabs=(360, "right", 460, "right", 560, "right", 660, "right", 760, "right", 860, "right")
         )
         self.text_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.scrollbar.config(command=self.text_area.yview)
@@ -749,12 +749,14 @@ class StockApp:
         if item["price"] == 0:
             name_tag = "blue" if code in HIGHLIGHT_STOCKS else "white"
             self.text_area.insert(tk.END, f"{lbl_str}", name_tag)
-            self.text_area.insert(tk.END, "\t—\t—\t—\n", "white")
+            self.text_area.insert(tk.END, "\t—\t—\t—\t—\t—\n", "white")
             return
 
         p_str = f"{item['price']:.2f}"
         c_str = f"{item['chg']:+.2f}"
         pct_str = f"{item['pct']:+.2f}%"
+        h_str = f"{item['high']:.2f}"
+        l_str = f"{item['low']:.2f}"
         
         col = price_color_tag(item["chg"])
         pct = item["pct"]
@@ -764,28 +766,28 @@ class StockApp:
         # 判斷整行背景色覆蓋規則（處理突發變動 1% 的分流，與原本大於等於 5% 的暴漲跌高亮）
         if alert:
             if alert_dir == "up":
-                self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "alert_up")
+                self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\t{h_str}\t{l_str}\n", "alert_up")
             else:
-                self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "alert_down")
+                self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\t{h_str}\t{l_str}\n", "alert_down")
             return
 
         if pct >= 5:
-            self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "bg_red")
+            self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\t{h_str}\t{l_str}\n", "bg_red")
             return
 
         if pct <= -5:
-            self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\n", "bg_green")
+            self.text_area.insert(tk.END, f"{lbl_str}\t{p_str}\t{c_str}\t{pct_str}\t{h_str}\t{l_str}\n", "bg_green")
             return
 
         # 處理高亮特定特殊股：名稱固定藍色，股價、漲跌、漲跌幅全部隨漲跌變動顏色
         if code in HIGHLIGHT_STOCKS:
             self.text_area.insert(tk.END, f"{lbl_str}", "blue")
-            self.text_area.insert(tk.END, f"\t{p_str}\t{c_str}\t{pct_str}\n", col)
+            self.text_area.insert(tk.END, f"\t{p_str}\t{c_str}\t{pct_str}\t{h_str}\t{l_str}\n", col)
             return
 
         # 一般正常個股分段填入：前置名稱維持白色，股價、漲跌、漲跌幅隨漲跌變動顏色
         self.text_area.insert(tk.END, f"{lbl_str}", "white")
-        self.text_area.insert(tk.END, f"\t{p_str}\t{c_str}\t{pct_str}\n", col)
+        self.text_area.insert(tk.END, f"\t{p_str}\t{c_str}\t{pct_str}\t{h_str}\t{l_str}\n", col)
 
     def render_data(self):
         """將最新的 state 資料渲染進視窗"""
@@ -824,6 +826,7 @@ class StockApp:
             if d:
                 indices.append({
                     "label": idx_info["name"], "price": d["price"], "chg": d["chg"], "pct": d["pct"],
+                    "high": d["high"], "low": d["low"],
                     "code": idx_info["code"], "alert": d.get("alert", False), "alert_dir": d.get("alert_dir", "")
                 })
 
@@ -833,6 +836,7 @@ class StockApp:
             label = f"{d['name']} ({c})" if d["name"] else c
             item_data = {
                 "label": label, "price": d["price"], "chg": d["chg"], "pct": d["pct"],
+                "high": d["high"], "low": d["low"],
                 "code": c, "alert": d.get("alert", False), "alert_dir": d.get("alert_dir", "")
             }
             industry = self.state.get_industry(c)
@@ -846,13 +850,14 @@ class StockApp:
             label = f"{d['name']} ({c})" if d["name"] else c
             item_data = {
                 "label": label, "price": d["price"], "chg": d["chg"], "pct": d["pct"],
+                "high": d["high"], "low": d["low"],
                 "code": c, "alert": d.get("alert", False), "alert_dir": d.get("alert_dir", "")
             }
             etfs.append(item_data)
 
         # 標題行同步使用定位符號，確保絕對對齊
-        header_line = "股名/股號\t股價\t漲跌\t漲跌幅(%)\n"
-        separator   = "───────────────────────────────────────────────────────────────────\n"
+        header_line = "股名/股號\t股價\t漲跌\t漲跌幅(%)\t最高\t最低\n"
+        separator   = "──────────────────────────────────────────────────────────────────────────────────────────\n"
 
         # 輸出 ── 指數區 ──
         if indices:
