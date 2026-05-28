@@ -28,72 +28,11 @@ def now_tpe():
 EXCEL_FILE = "個股股價.xlsx"
 CSV_FILE = "即時報價.csv"
 
-# --- 股票與 ETF 清單 -------------------------
+# --- 股票與 ETF 清單（從 Excel main 工作表載入）---
 
-WATCH_LIST = [
-    "2330",
-    "2317",
-    "2308",
-    "2454",
-    "3711",
-    "2383",
-    "3037",
-    "2345",
-    "3017",
-    "2303",
-    "2382",
-    "2357",
-    "2885",
-    "2603",
-    "2890",
-    "2880",
-    "6223",  # 旺矽
-    "6669",  # 緯穎
-    "8046",  # 南電
-    "2327",  # 國巨
-    "3665",  # 貿聯-KY
-    "2368",  # 金像電
-    "3653",  # 健策
-    "5274",  # 信驊
-    "6274",  # 台燿
-    "6515",  # 穎崴
-
-    # 太空與低軌衛星概念股
-    "3491",  # 昇達科
-    "2313",  # 華通
-    "6285",  # 啟碁
-    "3105",  # 穩懋
-    "6271",  # 同欣電
-    "3138",  # 耀登
-    "2419",  # 仲琦
-    "3062",  # 建漢
-    "4916",  # 事欣科
-    "6568",  # 宏觀
-    "6190",  # 萬泰科
-    "2314",  # 台揚
-    "2367",  # 燿華
-    "6412",  # 群電
-    "6278",  # 台表科
-    "2412",  # 中華電
-    "2312",  # 金寶
-    "3178",  # 公準
-
-    # 記憶體與相關晶片、封測股
-    "2408",  # 南亞科
-    "2344",  # 華邦電
-    "8299",  # 群聯
-    "3260",  # 威剛
-    "6239"   # 力成
-]
-
-# 所有 ETF 代碼統一在此處維護，不再寫入 WATCH_LIST
-ETF_CODES = {
-    "00910","009802","0050", "00981A", "00631L", "00685L", "00735", "00910", "00947","009816","00709","00403A","00830","00935","00662","00657",
-}
-
-# --- 高亮特殊股設定清單 -----------------------
-# 在此清單內的股票名稱與代碼將會固定顯示為藍色，其股價與漲跌幅維持原本顏色變動
-HIGHLIGHT_STOCKS = ["009802","2330", "0050", "009816", "00981A", ]
+WATCH_LIST: list[str] = []
+ETF_CODES: set[str] = set()
+HIGHLIGHT_STOCKS: list[str] = []
 
 # --- 指數清單 --------------------------------
 
@@ -166,6 +105,7 @@ class StockState:
         init_ok = self._init_excel_file()
         if init_ok:
             self._load_industry_mapping()
+            self._load_main_config()
 
     def _init_excel_file(self) -> bool:
         """初始化本地 Excel 檔案，確保其存在，回傳是否成功"""
@@ -229,6 +169,40 @@ class StockState:
                             self._industry_cache[code] = industry
         except Exception as e:
             self.error = f"載入產業別一覽表失敗: {e}"
+
+    def _load_main_config(self):
+        """從 Excel main 工作表讀取個股/ETF/高亮清單"""
+        global WATCH_LIST, ETF_CODES, HIGHLIGHT_STOCKS
+        try:
+            if not os.path.exists(EXCEL_FILE):
+                return
+            wb = openpyxl.load_workbook(EXCEL_FILE, read_only=True)
+            if "main" not in wb.sheetnames:
+                wb.close()
+                return
+            ws = wb["main"]
+            watch = []
+            etf = set()
+            highlight = []
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if len(row) >= 1 and row[0] is not None:
+                    val = str(row[0]).strip()
+                    if val:
+                        watch.append(val)
+                if len(row) >= 2 and row[1] is not None:
+                    val = str(row[1]).strip()
+                    if val:
+                        etf.add(val)
+                if len(row) >= 3 and row[2] is not None:
+                    val = str(row[2]).strip()
+                    if val:
+                        highlight.append(val)
+            wb.close()
+            WATCH_LIST = watch
+            ETF_CODES = etf
+            HIGHLIGHT_STOCKS = highlight
+        except Exception as e:
+            self.error = f"載入 main 設定表失敗: {e}"
 
     def get_industry(self, code: str) -> str:
         return self._industry_cache.get(code, "其他業")
