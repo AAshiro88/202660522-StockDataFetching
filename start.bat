@@ -2,7 +2,7 @@
 :: 強制指定使用 UTF-8 全域編碼
 chcp 65001 >nul
 
-title 台股即時報價監控系統 (py312 全域環境)
+title 即時報價監控系統 (py312 全域環境)
 
 :: 使用最安全的英文顯示進度，100% 避開編碼衝突
 echo [System] Activating py312 env...

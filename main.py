@@ -641,7 +641,7 @@ class StockApp:
         self.root = root
         self.state = state
         
-        self.root.title("台股即時報價監控系統")
+        self.root.title("即時報價監控系統")
         # 修正：將視窗預設寬度調整至 1100，配合最高、最低欄位的定位點
         self.root.geometry("1100x800")
         self.root.configure(bg="#1e1e1e")
