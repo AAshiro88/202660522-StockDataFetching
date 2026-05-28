@@ -5,5 +5,12 @@
 # 順便排除 Excel 產生的暫存檔（避免干擾）
 ~$*.xlsx
 
+# 排除 PyInstaller 打包產出
+/dist/
+/__pycache__/
+/.vscode/
+*.spec
+
+*.jpg
 # 排除例外：唯獨允許追蹤此 template 檔案（前方加上驚嘆號）
 !個股股價 - template.xlsx
