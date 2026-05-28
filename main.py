@@ -1,3 +1,4 @@
+import sys
 import time
 import threading
 import requests
@@ -25,8 +26,13 @@ def now_tpe():
 
 # --- 檔案設定 --------------------------------
 
-EXCEL_FILE = "個股股價.xlsx"
-CSV_FILE = "即時報價.csv"
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+EXCEL_FILE = os.path.join(BASE_DIR, "個股股價.xlsx")
+CSV_FILE = os.path.join(BASE_DIR, "即時報價.csv")
 
 # --- 股票與 ETF 清單（從 Excel main 工作表載入）---
 
@@ -108,18 +114,24 @@ class StockState:
             self._load_main_config()
 
     def _init_excel_file(self) -> bool:
-        """初始化本地 Excel 檔案，確保其存在，回傳是否成功"""
-        if not os.path.exists(EXCEL_FILE):
+        """初始化本地 Excel 檔案，確保其存在且有效，回傳是否成功"""
+        if os.path.exists(EXCEL_FILE):
             try:
-                wb = openpyxl.Workbook()
-                # 移除預設的第一個工作表
-                default_sheet = wb.active
-                wb.remove(default_sheet)
-                wb.save(EXCEL_FILE)
+                wb = openpyxl.load_workbook(EXCEL_FILE)
                 wb.close()
-            except Exception as e:
-                self.error = f"初始化 Excel 檔案失敗: {e}"
-                return False
+                return True
+            except Exception:
+                pass
+            os.remove(EXCEL_FILE)
+        try:
+            wb = openpyxl.Workbook()
+            default_sheet = wb.active
+            wb.remove(default_sheet)
+            wb.save(EXCEL_FILE)
+            wb.close()
+        except Exception as e:
+            self.error = f"初始化 Excel 檔案失敗: {e}"
+            return False
         return True
 
     def _load_industry_mapping(self):
